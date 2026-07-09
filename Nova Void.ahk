@@ -1,4 +1,5 @@
-﻿;   NOVA VOID — (Cayo Perico Toolkit)
+; ============================================================================
+;   NOVA VOID — (Cayo Perico Toolkit)
 ;   © Turtle V
 ; ============================================================================
 ;
@@ -41,8 +42,8 @@ CurrentStatus  := "Неизвестно"
 ; --- Автообновление через GitHub ---
 ScriptVersion     := "1.1"  ; версия текущего скрипта — меняй при каждом релизе
 ; Ссылки на "сырые" файлы в твоём репозитории (замени USERNAME/REPO/BRANCH):
-UpdateVersionURL  := "https://raw.githubusercontent.com/USERNAME/REPO/main/version.txt"
-UpdateScriptURL   := "https://raw.githubusercontent.com/USERNAME/REPO/main/NovaSync.ahk"
+UpdateVersionURL  := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/version.txt"
+UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/NovaSync.ahk"
 
 global g_hProcess    := 0
 global g_isSuspended := false
