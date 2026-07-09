@@ -1,5 +1,5 @@
 ; ============================================================================
-;   NOVA VOID — System Control Panel
+;   NOVA VOID — (Cayo Perico Toolkit)
 ;   © Turtle V
 ; ============================================================================
 ;
@@ -40,7 +40,7 @@ ProcessName    := "GTA5_Enhanced.exe" ; имя процесса, который 
 CurrentStatus  := "Неизвестно"
 
 ; --- Автообновление через GitHub ---
-ScriptVersion     := "1.6"  ; версия текущего скрипта — меняй при каждом релизе
+ScriptVersion     := "1.7"  ; версия текущего скрипта — меняй при каждом релизе
 ; Ссылки на "сырые" файлы в твоём репозитории (замени USERNAME/REPO/BRANCH):
 UpdateVersionURL  := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/version.txt"
 UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/Nova%20Void.ahk"
@@ -81,7 +81,7 @@ ShowSplash() {
     splash.SetFont("s20 Bold c" . COLOR_ACCENT, "Segoe UI")
     splash.Add("Text", "w300 h60 Center x20 y25", "◈ NOVA VOID")
     splash.SetFont("s9 c" . COLOR_MUTED, "Segoe UI")
-    splash.Add("Text", "w300 h20 Center x20 y+5", "System Control Panel")
+    splash.Add("Text", "w300 h20 Center x20 y+5", "Cayo Perico Toolkit")
 
     targetW := 340, targetH := 130
     startW  := 40,  startH  := 16
