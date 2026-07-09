@@ -43,7 +43,7 @@ CurrentStatus  := "Неизвестно"
 ScriptVersion     := "1.1"  ; версия текущего скрипта — меняй при каждом релизе
 ; Ссылки на "сырые" файлы в твоём репозитории (замени USERNAME/REPO/BRANCH):
 UpdateVersionURL  := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/version.txt"
-UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/NovaSync.ahk"
+UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/NovaVoid.ahk"
 
 global g_hProcess    := 0
 global g_isSuspended := false
