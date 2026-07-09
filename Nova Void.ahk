@@ -40,10 +40,15 @@ ProcessName    := "GTA5_Enhanced.exe" ; имя процесса, который 
 CurrentStatus  := "Неизвестно"
 
 ; --- Автообновление через GitHub ---
-ScriptVersion     := "1.7"  ; версия текущего скрипта — меняй при каждом релизе
+ScriptVersion     := "1.8"  ; версия текущего скрипта — меняй при каждом релизе
 ; Ссылки на "сырые" файлы в твоём репозитории (замени USERNAME/REPO/BRANCH):
 UpdateVersionURL  := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/version.txt"
 UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/Nova%20Void.ahk"
+
+; --- НОВОЕ (п.5): кастомный звук заморозки, скачивается с GitHub при первом запуске ---
+; Замени ссылку на прямую ссылку на свой .wav/.mp3 файл в репозитории
+CustomSoundURL  := "https://raw.githubusercontent.com/USERNAME/REPO/main/freeze_sound.wav"
+CustomSoundPath := A_ScriptDir . "\freeze_sound.wav"
 
 global g_hProcess    := 0
 global g_isSuspended := false
@@ -120,12 +125,13 @@ MyGui.SetFont("s14 Bold c" . COLOR_ACCENT, "Segoe UI Symbol")
 MyGui.Add("Text", "w220 h30 x20 y20", "◈ NOVA VOID")
 
 ; --- Кнопки управления в правом верхнем углу ---
+; ИЗМЕНЕНО: кнопка биндов перенесена вниз с понятной текстовой подписью (см. п.2)
 MyGui.SetFont("s11 Bold c" . COLOR_TEXT, "Segoe UI")
-KeyBtn   := MyGui.Add("Button", "w30 h30 x260 y15 Background" . COLOR_PANEL, "⌨")
+																				   
 HelpBtn  := MyGui.Add("Button", "w30 h30 x295 y15 Background" . COLOR_PANEL, "?")
 MinBtn   := MyGui.Add("Button", "w30 h30 x330 y15 Background" . COLOR_PANEL, "▁")
 CloseBtn := MyGui.Add("Button", "w30 h30 x365 y15 Background" . COLOR_PANEL, "✕")
-KeyBtn.OnEvent("Click", OpenBindEditor)
+									   
 HelpBtn.OnEvent("Click", OnHelpClick)
 MinBtn.OnEvent("Click", MinimizeToTray)
 CloseBtn.OnEvent("Click", (*) => ExitApp())  ; крестик полностью закрывает скрипт
@@ -161,9 +167,32 @@ FreezeBtn.OnEvent("Click", OnFreezeClick)
 MyGui.SetFont("s9 Norm c" . COLOR_MUTED, "Segoe UI")
 FreezeStatusText := MyGui.Add("Text", "w375 h20 x20 Center y+10", "Статус заморозки: ожидание")
 
+; --- НОВОЕ (п.1): переключатель "Поверх всех окон" ---
+MyGui.SetFont("s9 Norm c" . COLOR_TEXT, "Segoe UI")
+AlwaysOnTopChk := MyGui.Add("Checkbox", "w375 x20 y+15 c" . COLOR_TEXT, "📌  Поверх всех окон")
+AlwaysOnTopChk.OnEvent("Click", OnAlwaysOnTopToggle)
+
+; --- НОВОЕ (п.2): кнопка настройки биндов с понятной подписью (была маленькой иконкой ⌨) ---
+MyGui.SetFont("s10 Bold c" . COLOR_TEXT, "Segoe UI")
+BindEditorBtn := MyGui.Add("Button", "w375 h38 x20 y+12 Background" . COLOR_PANEL, "⌨  Настройка клавиш")
+BindEditorBtn.OnEvent("Click", OpenBindEditor)
+
+; --- НОВОЕ (п.3): кнопка ручной проверки обновлений ---
+UpdateCheckBtn := MyGui.Add("Button", "w375 h38 x20 y+10 Background" . COLOR_PANEL, "🔄  Проверить обновления")
+UpdateCheckBtn.OnEvent("Click", (*) => CheckForUpdates(false))
+
 ; --- Копирайт ---
 MyGui.SetFont("s10 c" . COLOR_MUTED, "Segoe UI")
 MyGui.Add("Text", "w375 h20 x20 Center y+15", "© Turtle V")
+
+; --- НОВОЕ (п.1): обработчик переключателя "Поверх всех окон" ---
+OnAlwaysOnTopToggle(ctrl, *) {
+    global MyGui
+    if (ctrl.Value)
+        MyGui.Opt("+AlwaysOnTop")
+    else
+        MyGui.Opt("-AlwaysOnTop")
+}
 
 ; ============================================================================
 ;   6. ТЕНЬ ОКНА / ПЕРЕТАСКИВАНИЕ ЗА ЛЮБУЮ ОБЛАСТЬ
@@ -180,10 +209,12 @@ ApplyWindowShadow(hwnd) {
 }
 
 ; Показываем окно сразу после заставки, без Fade-In
-MyGui.Show("w415 h435")
+MyGui.Show("w415 h570")
 
 ; Тихая проверка обновлений через несколько секунд после запуска
 SetTimer(() => CheckForUpdates(true), -3000)
+; НОВОЕ (п.5): тихая загрузка кастомного звука заморозки, если его ещё нет
+SetTimer(EnsureCustomSound, -1000)
 
 OnMessage(0x0201, WM_LBUTTONDOWN)
 WM_LBUTTONDOWN(wParam, lParam, msg, hwnd) {
@@ -273,6 +304,34 @@ OnFreezeClick(*) {
     FreezeProcess()
 }
 
+; --- НОВОЕ (п.5): проигрывание кастомного звука заморозки (если скачан) ---
+PlayFreezeSound() {
+    global CustomSoundPath
+    if FileExist(CustomSoundPath) {
+        try {
+            SoundPlay(CustomSoundPath)
+            return
+        }
+    }
+    ; запасной вариант, если файл ещё не скачан или SoundPlay не смог его открыть
+    SoundBeep(450, 200)  ; п.4: пониженная тональность (было 900 Гц)
+}
+
+; --- НОВОЕ (п.5): скачивание кастомного звука с GitHub, если его ещё нет локально ---
+EnsureCustomSound() {
+    global CustomSoundURL, CustomSoundPath
+    if FileExist(CustomSoundPath)
+        return
+    try {
+        result := DllCall("urlmon\URLDownloadToFileW", "Ptr", 0, "WStr", CustomSoundURL,
+            "WStr", CustomSoundPath, "UInt", 0, "Ptr", 0)
+        if (result != 0 && FileExist(CustomSoundPath))
+            FileDelete(CustomSoundPath)  ; неудачная/частичная загрузка — удаляем, чтобы не мешала
+    } catch {
+        ; тихо игнорируем — при заморозке просто прозвучит запасной SoundBeep
+    }
+}
+
 FreezeProcess() {
     global g_hProcess, g_isSuspended, EditField, FreezeStatusText
 
@@ -306,6 +365,8 @@ FreezeProcess() {
     g_hProcess    := hProcess
     g_isSuspended := true
 
+    ; ИЗМЕНЕНО (п.4/5): играем кастомный звук, если он скачан, иначе — тихий Beep (450 Гц)
+    PlayFreezeSound()
     ShowTip("'" . targetProcess . "' приостановлен на 10 секунд")
     FreezeStatusText.Text := "Статус заморозки: заморожен на 10 сек..."
 
@@ -320,6 +381,7 @@ ResumeProcess() {
 
     DllCall("ntdll.dll\NtResumeProcess", "Ptr", g_hProcess, "Int")
 
+    SoundBeep(350, 200)  ; ИЗМЕНЕНО (п.4): тише/ниже, чем было раньше (400 Гц вместо резкого сигнала)
     ShowTip("Процесс возобновлён")
     FreezeStatusText.Text := "Статус заморозки: возобновлён"
 }
@@ -442,6 +504,7 @@ OnHelpClick(*) {
         . "процесс из поля ввода (по умолчанию '" . ProcessName . "') на 10 сек.`n"
         . "Работает через NtSuspendProcess (стоп всех потоков сразу),`n"
         . "через 10 сек сама вызывает NtResumeProcess и возобновляет.`n`n"
+        . "📌 Чекбокс 'Поверх всех окон' — закрепляет окно поверх других приложений.`n`n"
         . "⌨ Кнопка ⌨ — открывает окно смены биндов. Нажмите 'Изменить'`n"
         . "у нужного действия и сразу нажмите новую клавишу (5 сек на ввод).`n"
         . "Бинды хранятся только в памяти скрипта, без .ini файла —`n"
@@ -508,7 +571,7 @@ CheckForUpdates(silent := false) {
     remoteVersion := ""
     try {
         whr := ComObject("WinHttp.WinHttpRequest.5.1")
-        whr.Open("GET", UpdateVersionURL, false)
+        whr.Open("GET", UpdateVersionURL . "?cb=" . A_TickCount, false)
         whr.SetRequestHeader("Cache-Control", "no-cache")
         whr.Send()
         if (whr.Status = 200)
@@ -545,7 +608,7 @@ DownloadAndApplyUpdate() {
 
     try {
         whr := ComObject("WinHttp.WinHttpRequest.5.1")
-        whr.Open("GET", UpdateScriptURL, false)
+        whr.Open("GET", UpdateScriptURL . "?cb=" . A_TickCount, false)
         whr.SetRequestHeader("Cache-Control", "no-cache")
         whr.Send()
 
