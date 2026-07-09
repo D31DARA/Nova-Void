@@ -40,7 +40,7 @@ ProcessName    := "GTA5_Enhanced.exe" ; имя процесса, который 
 CurrentStatus  := "Неизвестно"
 
 ; --- Автообновление через GitHub ---
-ScriptVersion     := "1.3"  ; версия текущего скрипта — меняй при каждом релизе
+ScriptVersion     := "1.4"  ; версия текущего скрипта — меняй при каждом релизе
 ; Ссылки на "сырые" файлы в твоём репозитории (замени USERNAME/REPO/BRANCH):
 UpdateVersionURL  := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/version.txt"
 UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/Nova%20Void.ahk"
