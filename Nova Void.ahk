@@ -43,7 +43,7 @@ CurrentStatus  := "Неизвестно"
 ScriptVersion     := "1.3"  ; версия текущего скрипта — меняй при каждом релизе
 ; Ссылки на "сырые" файлы в твоём репозитории (замени USERNAME/REPO/BRANCH):
 UpdateVersionURL  := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/version.txt"
-UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/NovaVoid.ahk"
+UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/Nova%20Void.ahk"
 
 global g_hProcess    := 0
 global g_isSuspended := false
@@ -137,9 +137,9 @@ StatusText := MyGui.Add("Text", "w375 h22 x20 y+10 Center", "Статус: " . C
 ; --- Кнопки блокировки/разблокировки IP ---
 MyGui.SetFont("s11 Bold c" . COLOR_TEXT, "Segoe UI")
 DisableBtn := MyGui.Add("Button", "w375 h45 x20 y+15 Background" . COLOR_ACCENT,
-    "🔒 ЗАБЛОКИРОВАТЬ IP  (" . Binds["Block"] . ")")
+    "🔒  ЗАБЛОКИРОВАТЬ IP  (" . Binds["Block"] . ")")
 EnableBtn  := MyGui.Add("Button", "w375 h45 x20 y+10 Background" . COLOR_ACCENT2,
-    "🔓 РАЗБЛОКИРОВАТЬ IP  (" . Binds["Unblock"] . ")")
+    "🔓  РАЗБЛОКИРОВАТЬ IP  (" . Binds["Unblock"] . ")")
 DisableBtn.OnEvent("Click", DisableInternet)
 EnableBtn.OnEvent("Click", EnableInternet)
 
