@@ -8,16 +8,29 @@
 ;    1. НАСТРОЙКИ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 ;    2. ЦВЕТОВАЯ ПАЛИТРА
 ;    3. СИСТЕМА БИНДОВ (хранится в памяти скрипта, без .ini файла)
-;    4. ЗАСТАВКА ПРИ ЗАПУСКЕ (без Fade-In — эффект "разрастания")
-;    5. ГЛАВНОЕ ОКНО (GUI)
+;    4. ЗАСТАВКА ПРИ ЗАПУСКЕ (рост из центра + глитч-эффект + typewriter)
+;    5. ГЛАВНОЕ ОКНО (GUI, анимации кнопок Pulse, свой тумблер AlwaysOnTop)
 ;    6. ТЕНЬ ОКНА / ПЕРЕТАСКИВАНИЕ ЗА ЛЮБУЮ ОБЛАСТЬ
 ;    7. РЕГИСТРАЦИЯ ГОРЯЧИХ КЛАВИШ
-;    8. ТРЕЙ (значок в системном трее)
+;    8. ТРЕЙ (значок в трее + bounce-анимации сворачивания/восстановления)
 ;    9. ЛОГИКА: БЛОКИРОВКА / РАЗБЛОКИРОВКА IP (netsh advfirewall)
-;   10. ЛОГИКА: ЗАМОРОЗКА / РАЗМОРОЗКА ПРОЦЕССА (NtSuspend/NtResumeProcess)
+;   10. ЛОГИКА: ЗАМОРОЗКА / РАЗМОРОЗКА ПРОЦЕССА (NtSuspend/NtResumeProcess,
+;       ИСПРАВЛЕН баг с невозможностью повторной заморозки — см. п.10)
 ;   11. ОКНО СМЕНЫ БИНДОВ (кнопка ⌨)
 ;   12. ОКНО СПРАВКИ (кнопка ?)
-;   13. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (тултипы, уведомления, монитор брандмауэра)
+;   13. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (Pulse-анимация кнопок, тултипы, уведомления)
+; ============================================================================
+;
+;   ИЗМЕНЕНИЯ В ЭТОЙ ВЕРСИИ
+;   • ИСПРАВЛЕН критичный баг: после разморозки процесс нельзя было заморозить
+;     повторно, т.к. флаг g_isSuspended никогда не сбрасывался обратно в false.
+;     Теперь ResumeProcess() корректно сбрасывает g_isSuspended и g_hProcess,
+;     поэтому повторная заморозка работает без перезапуска скрипта.
+;   • Перенесены и оптимизированы все анимации из тестовой версии: заставка
+;     с глитч-эффектом, Pulse-анимация нажатия кнопок, анимация закрытия
+;     (сжатие окна), bounce-анимации сворачивания/восстановления из трея,
+;     кастомный тумблер "Поверх всех окон", уведомление о заморозке с
+;     обратным таймером и вращающимся индикатором.
 ; ============================================================================
 
 #Requires AutoHotkey v2.0
@@ -40,8 +53,7 @@ ProcessName    := "GTA5_Enhanced.exe" ; имя процесса, который 
 CurrentStatus  := "Неизвестно"
 
 ; --- Автообновление через GitHub ---
-ScriptVersion     := "1.8"  ; версия текущего скрипта — меняй при каждом релизе
-; Ссылки на "сырые" файлы в твоём репозитории (замени USERNAME/REPO/BRANCH):
+ScriptVersion     := "2.0"  ; версия текущего скрипта — меняй при каждом релизе
 UpdateVersionURL  := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/version.txt"
 UpdateScriptURL   := "https://raw.githubusercontent.com/D31DARA/Nova-Void/main/Nova%20Void.ahk"
 
@@ -53,6 +65,13 @@ CustomSoundPath := A_ScriptDir . "\freeze_sound.wav"
 global g_hProcess    := 0
 global g_isSuspended := false
 
+; НОВОЕ (исправление бага): переменные позиции окна ДОЛЖНЫ быть инициализированы заранее.
+; Раньше они получали значение только внутри MinimizeToTray() — если пользователь открывал
+; окно из трея ДО первого сворачивания, чтение неинициализированных переменных вызывало ошибку.
+global g_LastWinX   := ""
+global g_LastWinY   := ""
+global g_IsMinimized := false
+
 ; ============================================================================
 ;   2. ЦВЕТОВАЯ ПАЛИТРА
 ; ============================================================================
@@ -62,6 +81,7 @@ COLOR_ACCENT  := "C1121F"   ; акцентный красный — заголо
 COLOR_ACCENT2 := "2E2E2E"   ; второй акцент — нейтральные кнопки/панели
 COLOR_TEXT    := "E5E5E5"   ; основной текст
 COLOR_MUTED   := "9C9C9C"   ; второстепенный текст
+COLOR_INFO    := "1C7ED6"   ; НОВОЕ: голубой акцент — уведомление о заморозке (обратный таймер)
 
 ; ============================================================================
 ;   3. СИСТЕМА БИНДОВ (без .ini — хранится в памяти в течение сессии)
@@ -74,42 +94,105 @@ global Binds := Map(
 global BindLabels := Map()   ; ссылки на текстовые контролы окна биндов
 
 ; ============================================================================
-;   4. ЗАСТАВКА ПРИ ЗАПУСКЕ (эффект "разрастания" из центра, без Fade-In)
+;   4. ЗАСТАВКА ПРИ ЗАПУСКЕ (рост из центра + глитч-эффект)
 ; ============================================================================
 ShowSplash()
 
 ShowSplash() {
-    global COLOR_BG, COLOR_ACCENT, COLOR_TEXT
+    global COLOR_BG, COLOR_ACCENT, COLOR_TEXT, COLOR_MUTED
 
     splash := Gui("-Caption +AlwaysOnTop +ToolWindow", "Splash")
     splash.BackColor := COLOR_BG
+
+    ; --- Основной текст ---
     splash.SetFont("s20 Bold c" . COLOR_ACCENT, "Segoe UI")
-    splash.Add("Text", "w300 h60 Center x20 y25", "◈ NOVA VOID")
+    TitleTxt := splash.Add("Text", "w300 h60 Center x20 y25", "◈ NOVA VOID")
     splash.SetFont("s9 c" . COLOR_MUTED, "Segoe UI")
-    splash.Add("Text", "w300 h20 Center x20 y+5", "Cayo Perico Toolkit")
+    SubTxt := splash.Add("Text", "w300 h20 Center x20 y+5", "")
+
+    ; --- "Призрачные" слои для хроматической аберрации (RGB-расслоение) ---
+    splash.SetFont("s20 Bold cFF3355", "Segoe UI")
+    GhostRed := splash.Add("Text", "w300 h60 Center x20 y25", "◈ NOVA VOID")
+    splash.SetFont("s20 Bold c33E5FF", "Segoe UI")
+    GhostCyan := splash.Add("Text", "w300 h60 Center x20 y25", "◈ NOVA VOID")
+    GhostRed.Visible  := false
+    GhostCyan.Visible := false
 
     targetW := 340, targetH := 130
     startW  := 40,  startH  := 16
     cx := A_ScreenWidth  // 2
     cy := A_ScreenHeight // 2
+    fx := cx - targetW // 2
+    fy := cy - targetH // 2
 
     splash.Show("Hide w" . targetW . " h" . targetH)
 
+    ; ---- Фаза 1: рост из центра с лёгким дребезгом позиции ----
     steps := 14
     Loop steps {
         f := A_Index / steps
-        ; ease-out — быстрый рост в начале, плавное замедление к концу
-        f := 1 - (1 - f)**2
+        f := 1 - (1 - f)**2   ; ease-out
         w := Round(startW + (targetW - startW) * f)
         h := Round(startH + (targetH - startH) * f)
-        x := cx - w // 2
-        y := cy - h // 2
+        jx := (A_Index > 4 && Random(1, 4) = 1) ? Random(-2, 2) : 0
+        jy := (A_Index > 4 && Random(1, 4) = 1) ? Random(-1, 1) : 0
+        x := cx - w // 2 + jx
+        y := cy - h // 2 + jy
         splash.Show("x" . x . " y" . y . " w" . w . " h" . h . " NoActivate")
         Sleep(16)
     }
+    splash.Show("x" . fx . " y" . fy . " w" . targetW . " h" . targetH . " NoActivate")
 
-    Sleep(650)
+    ; ---- НОВОЕ: печатающийся текст (typewriter) для подзаголовка ----
+    TypewriterText(SubTxt, "Cayo Perico Toolkit", 22)
+
+    ; ---- Фаза 2: глитч-вспышки (RGB-расслоение + "рассыпание" текста + тряска) ----
+    finalTitle  := "◈ NOVA VOID"
+    glitchChars := "!@#$%&<>/\|~▓▒░■01"
+
+    bursts := 6
+    Loop bursts {
+        ; смещаем цветные "призраки" в случайную сторону — эффект расслоения канала
+        GhostRed.Move(20 + Random(-4, 4), 25 + Random(-2, 2))
+        GhostCyan.Move(20 + Random(-4, 4), 25 + Random(-2, 2))
+        GhostRed.Visible  := true
+        GhostCyan.Visible := true
+
+        ; "рассыпаем" заголовок на случайные символы
+        scrambled := ""
+        Loop Parse finalTitle
+            scrambled .= (A_LoopField = " ") ? " " : SubStr(glitchChars, Random(1, StrLen(glitchChars)), 1)
+        TitleTxt.Text := scrambled
+
+        ; лёгкая тряска всего окна
+        splash.Show("x" . (fx + Random(-3, 3)) . " y" . (fy + Random(-2, 2)) . " NoActivate")
+        Sleep(Random(30, 60))
+
+        ; возврат в чистое состояние между вспышками
+        GhostRed.Visible  := false
+        GhostCyan.Visible := false
+        TitleTxt.Text := finalTitle
+        splash.Show("x" . fx . " y" . fy . " NoActivate")
+        Sleep(Random(50, 100))
+    }
+
+    ; ---- Фаза 3: финальная стабилизация ----
+    TitleTxt.Text := finalTitle
+    splash.Show("x" . fx . " y" . fy . " w" . targetW . " h" . targetH . " NoActivate")
+
+    Sleep(500)
     splash.Destroy()
+}
+
+; --- НОВОЕ: печатающийся текст — раскрывает строку посимвольно ---
+TypewriterText(ctrl, text, delay := 22) {
+    ctrl.Text := ""
+    out := ""
+    Loop Parse text {
+        out .= A_LoopField
+        ctrl.Text := out
+        Sleep(delay)
+    }
 }
 
 ; ============================================================================
@@ -132,66 +215,98 @@ HelpBtn  := MyGui.Add("Button", "w30 h30 x295 y15 Background" . COLOR_PANEL, "?"
 MinBtn   := MyGui.Add("Button", "w30 h30 x330 y15 Background" . COLOR_PANEL, "▁")
 CloseBtn := MyGui.Add("Button", "w30 h30 x365 y15 Background" . COLOR_PANEL, "✕")
 									   
-HelpBtn.OnEvent("Click", OnHelpClick)
-MinBtn.OnEvent("Click", MinimizeToTray)
-CloseBtn.OnEvent("Click", (*) => ExitApp())  ; крестик полностью закрывает скрипт
+HelpBtn.OnEvent("Click", WrapWithPulse(OnHelpClick))
+MinBtn.OnEvent("Click", WrapWithPulse(MinimizeToTray))
+CloseBtn.OnEvent("Click", (*) => ExitWithAnimation())  ; НОВОЕ (п.4): анимация сжатия перед выходом
+
+; --- НОВОЕ (п.4): анимация закрытия — окно быстро сжимается к своему центру, затем ExitApp() ---
+ExitWithAnimation() {
+    global MyGui
+    try {
+        MyGui.GetPos(&x, &y, &w, &h)
+        cx := x + w // 2
+        cy := y + h // 2
+        steps := 8
+        Loop steps {
+            f := A_Index / steps
+            scale := 1 - f**1.3   ; ускоряющееся сжатие
+            curW := Max(10, Round(w * scale))
+            curH := Max(8, Round(h * scale))
+            curX := cx - curW // 2
+            curY := cy - curH // 2
+            MyGui.Move(curX, curY, curW, curH)
+            Sleep(9)
+        }
+    }
+    ExitApp()
+}
 
 ; --- Статус блокировки IP ---
 MyGui.SetFont("s10 c" . COLOR_TEXT, "Segoe UI")
-StatusText := MyGui.Add("Text", "w375 h22 x20 y+10 Center", "Статус: " . CurrentStatus)
+StatusText := MyGui.Add("Text", "w375 h22 x20 y+8 Center", "Статус: " . CurrentStatus)
 
 ; --- Кнопки блокировки/разблокировки IP ---
 MyGui.SetFont("s11 Bold c" . COLOR_TEXT, "Segoe UI")
-DisableBtn := MyGui.Add("Button", "w375 h45 x20 y+15 Background" . COLOR_ACCENT,
+DisableBtn := MyGui.Add("Button", "w375 h45 x20 y+10 Background" . COLOR_ACCENT,
     "🔒  ЗАБЛОКИРОВАТЬ IP  (" . Binds["Block"] . ")")
-EnableBtn  := MyGui.Add("Button", "w375 h45 x20 y+10 Background" . COLOR_ACCENT2,
+EnableBtn  := MyGui.Add("Button", "w375 h45 x20 y+8 Background" . COLOR_ACCENT2,
     "🔓  РАЗБЛОКИРОВАТЬ IP  (" . Binds["Unblock"] . ")")
-DisableBtn.OnEvent("Click", DisableInternet)
-EnableBtn.OnEvent("Click", EnableInternet)
+DisableBtn.OnEvent("Click", WrapWithPulse(DisableInternet))
+EnableBtn.OnEvent("Click", WrapWithPulse(EnableInternet))
 
 ; --- Разделитель перед новым блоком ---
-MyGui.Add("Text", "w375 x20 h1 y+15 Background" . COLOR_PANEL)
+MyGui.Add("Text", "w375 x20 h1 y+10 Background" . COLOR_PANEL)
 
 ; --- Заморозка процесса: поле с именем процесса ---
 MyGui.SetFont("s9 Norm c" . COLOR_MUTED, "Segoe UI")
-MyGui.Add("Text", "w375 h20 x20 y+10", "Процесс для заморозки:")
-EditField := MyGui.Add("Edit", "w375 x20 y+5 h25 Background" . COLOR_PANEL . " c" . COLOR_TEXT, ProcessName)
+MyGui.Add("Text", "w375 h20 x20 y+8", "Процесс для заморозки:")
+EditField := MyGui.Add("Edit", "w375 x20 y+4 h25 Background" . COLOR_PANEL . " c" . COLOR_TEXT, ProcessName)
 
 ; --- Кнопка заморозки на 10 секунд ---
 MyGui.SetFont("s11 Bold c" . COLOR_TEXT, "Segoe UI")
-FreezeBtn := MyGui.Add("Button", "w375 h45 x20 y+10 Background" . COLOR_ACCENT2,
+FreezeBtn := MyGui.Add("Button", "w375 h45 x20 y+8 Background" . COLOR_ACCENT2,
     "⏸  ЗАМОРОЗИТЬ  (" . Binds["Freeze"] . ")")
-FreezeBtn.OnEvent("Click", OnFreezeClick)
+FreezeBtn.OnEvent("Click", WrapWithPulse(OnFreezeClick))
 
 ; --- Статус заморозки ---
 MyGui.SetFont("s9 Norm c" . COLOR_MUTED, "Segoe UI")
-FreezeStatusText := MyGui.Add("Text", "w375 h20 x20 Center y+10", "Статус заморозки: ожидание")
+FreezeStatusText := MyGui.Add("Text", "w375 h20 x20 Center y+8", "Статус заморозки: ожидание")
 
-; --- НОВОЕ (п.1): переключатель "Поверх всех окон" ---
-MyGui.SetFont("s9 Norm c" . COLOR_TEXT, "Segoe UI")
-AlwaysOnTopChk := MyGui.Add("Checkbox", "w375 x20 y+15 c" . COLOR_TEXT, "📌  Поверх всех окон")
-AlwaysOnTopChk.OnEvent("Click", OnAlwaysOnTopToggle)
+; --- ИЗМЕНЕНО (п.2): "Поверх всех окон" теперь кастомная кнопка-тумблер в стиле тёмной темы,
+; а не нативный Windows-чекбокс (тот рисуется белым квадратом и не вписывается в дизайн) ---
+global g_AlwaysOnTop := false
+MyGui.SetFont("s10 Bold c" . COLOR_TEXT, "Segoe UI")
+AlwaysOnTopChk := MyGui.Add("Button", "w375 h36 x20 y+10 Background" . COLOR_PANEL, "📌  Поверх всех окон:  ВЫКЛ")
+AlwaysOnTopChk.OnEvent("Click", WrapWithPulse(OnAlwaysOnTopToggle))
 
 ; --- НОВОЕ (п.2): кнопка настройки биндов с понятной подписью (была маленькой иконкой ⌨) ---
 MyGui.SetFont("s10 Bold c" . COLOR_TEXT, "Segoe UI")
-BindEditorBtn := MyGui.Add("Button", "w375 h38 x20 y+12 Background" . COLOR_PANEL, "⌨  Настройка клавиш")
-BindEditorBtn.OnEvent("Click", OpenBindEditor)
+BindEditorBtn := MyGui.Add("Button", "w375 h38 x20 y+8 Background" . COLOR_PANEL, "⌨  Настройка клавиш")
+BindEditorBtn.OnEvent("Click", WrapWithPulse(OpenBindEditor))
 
 ; --- НОВОЕ (п.3): кнопка ручной проверки обновлений ---
-UpdateCheckBtn := MyGui.Add("Button", "w375 h38 x20 y+10 Background" . COLOR_PANEL, "🔄  Проверить обновления")
-UpdateCheckBtn.OnEvent("Click", (*) => CheckForUpdates(false))
+UpdateCheckBtn := MyGui.Add("Button", "w375 h38 x20 y+8 Background" . COLOR_PANEL, "🔄  Проверить обновления")
+UpdateCheckBtn.OnEvent("Click", WrapWithPulse((*) => CheckForUpdates(false)))
 
 ; --- Копирайт ---
 MyGui.SetFont("s10 c" . COLOR_MUTED, "Segoe UI")
-MyGui.Add("Text", "w375 h20 x20 Center y+15", "© Turtle V")
+MyGui.Add("Text", "w375 h20 x20 Center y+10", "© Turtle V")
 
-; --- НОВОЕ (п.1): обработчик переключателя "Поверх всех окон" ---
+; --- ИЗМЕНЕНО (п.2): переключатель "Поверх всех окон" — своя логика вкл/выкл + смена текста и цвета кнопки ---
 OnAlwaysOnTopToggle(ctrl, *) {
-    global MyGui
-    if (ctrl.Value)
+    global MyGui, g_AlwaysOnTop, COLOR_PANEL, COLOR_ACCENT
+
+    g_AlwaysOnTop := !g_AlwaysOnTop
+
+    if (g_AlwaysOnTop) {
         MyGui.Opt("+AlwaysOnTop")
-    else
+        ctrl.Text := "📌  Поверх всех окон:  ВКЛ"
+        ctrl.Opt("Background" . COLOR_ACCENT)
+    } else {
         MyGui.Opt("-AlwaysOnTop")
+        ctrl.Text := "📌  Поверх всех окон:  ВЫКЛ"
+        ctrl.Opt("Background" . COLOR_PANEL)
+    }
 }
 
 ; ============================================================================
@@ -209,18 +324,42 @@ ApplyWindowShadow(hwnd) {
 }
 
 ; Показываем окно сразу после заставки, без Fade-In
-MyGui.Show("w415 h570")
+MyGui.Show("w415 h535")
 
 ; Тихая проверка обновлений через несколько секунд после запуска
 SetTimer(() => CheckForUpdates(true), -3000)
 ; НОВОЕ (п.5): тихая загрузка кастомного звука заморозки, если его ещё нет
 SetTimer(EnsureCustomSound, -1000)
 
+; ИЗМЕНЕНО: перетаскивание теперь работает не только для главного окна,
+; но и для окна справки (HelpGuiRef) и окна смены биндов (BindGuiRef) —
+; у них тоже нет системного заголовка (+Caption), поэтому без этого
+; обработчика их вообще нельзя было бы подвинуть.
 OnMessage(0x0201, WM_LBUTTONDOWN)
 WM_LBUTTONDOWN(wParam, lParam, msg, hwnd) {
-    global MyGui
-    if (hwnd = MyGui.Hwnd) {
-        PostMessage(0xA1, 2, 0, , "ahk_id " . hwnd)
+    global MyGui, HelpGuiRef, BindGuiRef
+
+    ; ИСПРАВЛЕНО: после Destroy() переменные HelpGuiRef/BindGuiRef всё ещё
+    ; ссылаются на уже уничтоженный объект Gui — обращение к .Hwnd у такого
+    ; объекта вызывает ошибку. Оборачиваем в try, чтобы скрипт не падал,
+    ; даже если где-то ссылка не была вовремя очищена.
+    try {
+        if (hwnd = MyGui.Hwnd) {
+            PostMessage(0xA1, 2, 0, , "ahk_id " . hwnd)
+            return
+        }
+    }
+    try {
+        if (IsSet(HelpGuiRef) && HelpGuiRef && hwnd = HelpGuiRef.Hwnd) {
+            PostMessage(0xA1, 2, 0, , "ahk_id " . hwnd)
+            return
+        }
+    }
+    try {
+        if (IsSet(BindGuiRef) && BindGuiRef && hwnd = BindGuiRef.Hwnd) {
+            PostMessage(0xA1, 2, 0, , "ahk_id " . hwnd)
+            return
+        }
     }
 }
 
@@ -255,8 +394,18 @@ A_TrayMenu.Default := "Открыть окно"
 A_IconTip := "Nova Void"
 
 TrayShowWindow(*) {
-    global MyGui
-    MyGui.Show()
+    global MyGui, g_LastWinX, g_LastWinY, g_IsMinimized
+
+    if (!g_IsMinimized) {
+        ; ИСПРАВЛЕНО (баг из п.1): окно уже открыто (не было свёрнуто в трей) —
+        ; просто выводим его на передний план, без повторного проигрывания bounce-анимации.
+        MyGui.Show()
+        try WinActivate("ahk_id " . MyGui.Hwnd)
+        return
+    }
+
+    BounceInAndShow(MyGui, g_LastWinX, g_LastWinY)
+    g_IsMinimized := false
 }
 
 TrayCheckUpdates(*) {
@@ -268,9 +417,56 @@ TrayExitApp(*) {
 }
 
 MinimizeToTray(*) {
-    global MyGui
-    MyGui.Hide()
+    global MyGui, g_LastWinX, g_LastWinY, g_IsMinimized
+    MyGui.GetPos(&x, &y, &w, &h)
+    g_LastWinX := x
+    g_LastWinY := y
+    g_IsMinimized := true
+    BounceOutAndHide(MyGui, x, y, w, h)
     TrayTip("Nova Void", "Скрипт свёрнут в трей.`nЛКМ по иконке — открыть окно.")
+}
+
+; --- НОВОЕ: анимация "сворачивания" — окно сжимается к своему центру и прячется ---
+BounceOutAndHide(guiObj, x, y, w, h) {
+    cx := x + w // 2
+    cy := y + h // 2
+    steps := 9
+    Loop steps {
+        f := A_Index / steps
+        scale := 1 - f**1.5   ; ускоряющееся сжатие
+        curW := Max(20, Round(w * scale))
+        curH := Max(14, Round(h * scale))
+        curX := cx - curW // 2
+        curY := cy - curH // 2
+        guiObj.Move(curX, curY, curW, curH)
+        Sleep(10)
+    }
+    guiObj.Hide()
+    guiObj.Move(x, y, w, h)  ; возвращаем реальный размер, пока окно скрыто
+}
+
+; --- НОВОЕ: анимация "восстановления" — окно вырастает с эффектом пружины (overshoot) ---
+BounceInAndShow(guiObj, x, y) {
+    targetW := 415, targetH := 535
+
+    if (x = "" || y = "") {
+        guiObj.Show()  ; окно ещё ни разу не сворачивалось — показываем как обычно
+        return
+    }
+
+    cx := x + targetW // 2
+    cy := y + targetH // 2
+
+    scales := [0.3, 0.7, 1.15, 0.95, 1.0]  ; доли от целевого размера — эффект пружины/отскока
+    for scale in scales {
+        w := Round(targetW * scale)
+        h := Round(targetH * scale)
+        curX := cx - w // 2
+        curY := cy - h // 2
+        guiObj.Show("x" . curX . " y" . curY . " w" . w . " h" . h)
+        Sleep(45)
+    }
+    guiObj.Show("x" . x . " y" . y . " w" . targetW . " h" . targetH)
 }
 
 ; ============================================================================
@@ -295,6 +491,20 @@ OnExit(CleanupFirewallRule)
 CleanupFirewallRule(*) {
     global FwRuleName
     RunWait(A_ComSpec . ' /c netsh advfirewall firewall delete rule name="' . FwRuleName . '"', , "Hide")
+}
+
+; НОВОЕ (оптимизация): если скрипт закрывают, пока процесс ещё заморожен —
+; принудительно возобновляем его, иначе он останется висеть в suspended
+; навсегда (пользователь потеряет доступ к игре без явной причины).
+OnExit(ForceResumeOnExit)
+ForceResumeOnExit(*) {
+    global g_hProcess, g_isSuspended
+    if (g_isSuspended && g_hProcess) {
+        try DllCall("ntdll.dll\NtResumeProcess", "Ptr", g_hProcess, "Int")
+        try DllCall("CloseHandle", "Ptr", g_hProcess)
+        g_isSuspended := false
+        g_hProcess    := 0
+    }
 }
 
 ; ============================================================================
@@ -367,7 +577,8 @@ FreezeProcess() {
 
     ; ИЗМЕНЕНО (п.4/5): играем кастомный звук, если он скачан, иначе — тихий Beep (450 Гц)
     PlayFreezeSound()
-    ShowTip("'" . targetProcess . "' приостановлен на 10 секунд")
+    ; НОВОЕ: цветное уведомление с обратным таймером и вращающимся индикатором вместо ShowTip
+    ShowFreezeCountdown(10, targetProcess)
     FreezeStatusText.Text := "Статус заморозки: заморожен на 10 сек..."
 
     SetTimer(ResumeProcess, -10000)
@@ -381,10 +592,102 @@ ResumeProcess() {
 
     DllCall("ntdll.dll\NtResumeProcess", "Ptr", g_hProcess, "Int")
 
+    CloseFreezeCountdown()  ; НОВОЕ: гарантированно закрываем уведомление с таймером, если оно ещё висит
+
+    ; ИСПРАВЛЕНО: раньше эти строки отсутствовали, из-за чего g_isSuspended
+    ; навсегда оставался true после первой заморозки, и FreezeProcess() всегда
+    ; выходил по условию "процесс уже приостановлен" — повторная заморозка
+    ; была невозможна без перезапуска скрипта. Теперь состояние сбрасывается,
+    ; а хэндл процесса закрывается, чтобы не копить утечку хэндлов.
+    DllCall("CloseHandle", "Ptr", g_hProcess)
+    g_isSuspended := false
+    g_hProcess    := 0
+
     SoundBeep(350, 200)  ; ИЗМЕНЕНО (п.4): тише/ниже, чем было раньше (400 Гц вместо резкого сигнала)
     ShowTip("Процесс возобновлён")
     FreezeStatusText.Text := "Статус заморозки: возобновлён"
 }
+
+; ============================================================================
+;   НОВОЕ: УВЕДОМЛЕНИЕ О ЗАМОРОЗКЕ — ОБРАТНЫЙ ТАЙМЕР + ВРАЩАЮЩИЙСЯ ИНДИКАТОР
+; ============================================================================
+; ИСПРАВЛЕНО: раньше имя процесса и текст таймера лежали в одном Text-контроле
+; со стилем +0x200 (SS_CENTERIMAGE). Этот стиль рассчитан на однострочный текст
+; и ломает перенос строки (`n), из-за чего длинные имена вроде
+; "GTA5_Enhanced.exe" визуально обрезались. Теперь это два отдельных
+; контрола (имя процесса / таймер) без SS_CENTERIMAGE, а ширина окна
+; подбирается под длину имени процесса, так что оно никогда не обрезается.
+ShowFreezeCountdown(seconds, processName) {
+    global COLOR_INFO, g_FreezeNotifyGui, g_FreezeSpinnerCtrl, g_FreezeNameCtrl, g_FreezeTimerCtrl
+    global g_FreezeSecondsLeft, g_FreezeSpinnerIndex, g_FreezeProcessLabel
+
+    if IsSet(g_FreezeNotifyGui) && g_FreezeNotifyGui
+        try g_FreezeNotifyGui.Destroy()
+
+    g_FreezeSecondsLeft  := seconds
+    g_FreezeSpinnerIndex := 1
+    g_FreezeProcessLabel := processName
+
+    ; --- Автоширина: под каждый символ имени процесса ~9px (Segoe UI Bold, s12) ---
+    nameLine   := "⏸ «" . processName . "»"
+    textW      := Max(290, StrLen(nameLine) * 10)
+    winW       := 80 + textW  ; 80 = место под спиннер + отступы
+    winW       := Min(winW, A_ScreenWidth - 40)  ; не выходим за пределы экрана
+
+    g_FreezeNotifyGui := Gui("-Caption +AlwaysOnTop +ToolWindow")
+    g_FreezeNotifyGui.BackColor := COLOR_INFO
+
+    g_FreezeNotifyGui.SetFont("s22 cWhite Bold", "Segoe UI")
+    g_FreezeSpinnerCtrl := g_FreezeNotifyGui.Add("Text", "w60 h60 Center x8 y0", "◐")
+
+    ; --- Имя процесса: своя строка, без SS_CENTERIMAGE, не обрезается ---
+    g_FreezeNotifyGui.SetFont("s12 cWhite Bold", "Segoe UI")
+    g_FreezeNameCtrl := g_FreezeNotifyGui.Add("Text", "w" . textW . " Center x70 y10", nameLine)
+
+    ; --- Строка таймера — отдельно снизу ---
+    g_FreezeNotifyGui.SetFont("s10 cWhite Norm", "Segoe UI")
+    g_FreezeTimerCtrl := g_FreezeNotifyGui.Add("Text", "w" . textW . " Center x70 y+2",
+        "осталось: " . seconds . " сек")
+
+    g_FreezeNotifyGui.Show("NoActivate w" . winW . " h60 xCenter y20")
+
+    SetTimer(FreezeSpinnerTick, 120)     ; вращение индикатора ◐◓◑◒
+    SetTimer(FreezeCountdownTick, 1000)  ; уменьшение счётчика раз в секунду
+}
+
+FreezeSpinnerTick() {
+    global g_FreezeSpinnerCtrl, g_FreezeSpinnerIndex
+    static frames := ["◐", "◓", "◑", "◒"]
+
+    if !(IsSet(g_FreezeSpinnerCtrl) && g_FreezeSpinnerCtrl) {
+        SetTimer(FreezeSpinnerTick, 0)
+        return
+    }
+    g_FreezeSpinnerIndex := Mod(g_FreezeSpinnerIndex, 4) + 1
+    try g_FreezeSpinnerCtrl.Text := frames[g_FreezeSpinnerIndex]
+}
+
+FreezeCountdownTick() {
+    global g_FreezeSecondsLeft, g_FreezeTimerCtrl
+
+    g_FreezeSecondsLeft--
+
+    if (g_FreezeSecondsLeft <= 0) {
+        CloseFreezeCountdown()
+        return
+    }
+    if (IsSet(g_FreezeTimerCtrl) && g_FreezeTimerCtrl)
+        try g_FreezeTimerCtrl.Text := "осталось: " . g_FreezeSecondsLeft . " сек"
+}
+
+CloseFreezeCountdown() {
+    global g_FreezeNotifyGui
+    SetTimer(FreezeCountdownTick, 0)
+    SetTimer(FreezeSpinnerTick, 0)
+    if IsSet(g_FreezeNotifyGui) && g_FreezeNotifyGui
+        try g_FreezeNotifyGui.Destroy()
+}
+
 
 ; ============================================================================
 ;   11. ОКНО СМЕНЫ БИНДОВ (кнопка ⌨)
@@ -424,9 +727,20 @@ OpenBindEditor(*) {
 
     BindGuiRef.SetFont("s10 Bold c" . COLOR_TEXT, "Segoe UI")
     closeBtn := BindGuiRef.Add("Button", "w360 h32 x20 y+25 Background" . COLOR_ACCENT2, "Закрыть")
-    closeBtn.OnEvent("Click", (*) => BindGuiRef.Destroy())
+    ; ИСПРАВЛЕНО: обнуляем BindGuiRef после закрытия, иначе ссылка на
+    ; уничтоженный объект остаётся и ломает следующую проверку в drag-обработчике.
+    closeBtn.OnEvent("Click", (*) => CloseBindEditor())
 
     BindGuiRef.Show("w400")
+}
+
+; НОВОЕ: единая функция закрытия окна биндов — уничтожает Gui и
+; обязательно обнуляет BindGuiRef, чтобы не осталось "мёртвой" ссылки.
+CloseBindEditor(*) {
+    global BindGuiRef
+    if IsSet(BindGuiRef) && BindGuiRef
+        try BindGuiRef.Destroy()
+    BindGuiRef := ""
 }
 
 MakeRebindHandler(actionKey, label) {
@@ -499,36 +813,65 @@ OnHelpClick(*) {
         . " " . Binds["Block"] . " / кнопка ЗАБЛОКИРОВАТЬ IP — добавляет правило,`n"
         . "  блокирующее исходящий трафик на указанный адрес.`n"
         . " " . Binds["Unblock"] . " / кнопка РАЗБЛОКИРОВАТЬ IP — удаляет это правило.`n"
-        . " При закрытии скрипта правило удаляется автоматически.`n`n"
+        . " При закрытии скрипта правило удаляется автоматически.`n"
         . " " . Binds["Freeze"] . " / кнопка ЗАМОРОЗИТЬ — приостанавливает`n"
         . "процесс из поля ввода (по умолчанию '" . ProcessName . "') на 10 сек.`n"
         . "Работает через NtSuspendProcess (стоп всех потоков сразу),`n"
         . "через 10 сек сама вызывает NtResumeProcess и возобновляет.`n`n"
-        . "📌 Чекбокс 'Поверх всех окон' — закрепляет окно поверх других приложений.`n`n"
-        . "⌨ Кнопка ⌨ — открывает окно смены биндов. Нажмите 'Изменить'`n"
+        . "Кнопка 'Поверх всех окон' — закрепляет окно поверх других приложений.`n"
+        . "Настройка клавиш — открывает окно смены биндов. Нажмите 'Изменить'`n"
         . "у нужного действия и сразу нажмите новую клавишу (5 сек на ввод).`n"
         . "Бинды хранятся только в памяти скрипта, без .ini файла —`n"
-        . "при перезапуске скрипта они сбрасываются на значения по умолчанию.`n`n"
+        . "при перезапуске скрипта они сбрасываются на значения по умолчанию.`n"
         . " Кнопка ▁ — сворачивает окно в трей, скрипт работает в фоне.`n"
         . " Кнопка ✕ — полностью закрывает скрипт (правило брандмауэра будет удалено).`n"
         . " Также можно закрыть через трей — ПКМ по иконке → 'Выход'.`n`n"
-        . " Окно можно двигать за любую пустую часть.`n`n"
-        . " Автообновление: ПКМ по иконке в трее → 'Проверить обновления'.`n"
-        . "Скрипт сверяется с version.txt в GitHub-репозитории и, если`n"
-        . "там версия новее, предлагает скачать и применить обновление."
+        . " Все окна можно двигать за любую пустую часть.`n`n"
 
     HelpGuiRef.Add("Text", "w440 x20 y+20", helpText)
 
     HelpGuiRef.SetFont("s11 Bold c" . COLOR_TEXT, "Segoe UI")
     OkBtn := HelpGuiRef.Add("Button", "w440 h35 x20 y+15 Background" . COLOR_PANEL, "Понятно")
-    OkBtn.OnEvent("Click", (*) => HelpGuiRef.Destroy())
+    ; ИСПРАВЛЕНО: обнуляем HelpGuiRef после закрытия, иначе ссылка на
+    ; уничтоженный объект остаётся и ломает следующую проверку в drag-обработчике
+    ; (WM_LBUTTONDOWN) — именно из-за этого при повторном открытии справки
+    ; выскакивала ошибка на HelpGuiRef.Hwnd.
+    OkBtn.OnEvent("Click", (*) => CloseHelpWindow())
 
     HelpGuiRef.Show("w480")
+}
+
+; НОВОЕ: единая функция закрытия окна справки — уничтожает Gui и
+; обязательно обнуляет HelpGuiRef, чтобы не осталось "мёртвой" ссылки.
+CloseHelpWindow(*) {
+    global HelpGuiRef
+    if IsSet(HelpGuiRef) && HelpGuiRef
+        try HelpGuiRef.Destroy()
+    HelpGuiRef := ""
 }
 
 ; ============================================================================
 ;   13. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 ; ============================================================================
+
+; --- НОВОЕ: анимация нажатия кнопки — короткое "сжатие" и возврат к исходному размеру ---
+PulseButton(ctrl) {
+    try {
+        ctrl.GetPos(&x, &y, &w, &h)
+    } catch {
+        return
+    }
+    shrink := 3
+    ctrl.Move(x + shrink, y + shrink // 2, w - shrink * 2, h - shrink)
+    Sleep(35)
+    ctrl.Move(x, y, w, h)
+}
+
+; --- НОВОЕ: обёртка — добавляет PulseButton к любому обработчику Click, не меняя его логику ---
+WrapWithPulse(originalHandler) {
+    return (ctrl, info) => (PulseButton(ctrl), originalHandler(ctrl, info))
+}
+
 ShowNotification(text, color) {
     global NotifyGuiRef
     if IsSet(NotifyGuiRef) && NotifyGuiRef
@@ -536,9 +879,9 @@ ShowNotification(text, color) {
 
     NotifyGuiRef := Gui("-Caption +AlwaysOnTop +ToolWindow")
     NotifyGuiRef.BackColor := color
-    NotifyGuiRef.SetFont("s16 cWhite Bold", "Segoe UI")
+    NotifyGuiRef.SetFont("s19 cWhite Bold", "Segoe UI")
     NotifyGuiRef.Add("Text", "Center w300 h50", text)
-    NotifyGuiRef.Show("NoActivate w300 h50 xCenter y20")
+    NotifyGuiRef.Show("NoActivate w330 h50 xCenter y50")
     SetTimer(CloseNotify, -1500)
 }
 
